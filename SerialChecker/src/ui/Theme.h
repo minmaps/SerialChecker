@@ -25,6 +25,10 @@ constexpr ImU32 Label = IM_COL32(128, 128, 128, 255);
 constexpr ImU32 Muted = IM_COL32(82, 82, 82, 255);
 constexpr ImU32 White = IM_COL32(250, 250, 250, 255);
 constexpr ImU32 Black = IM_COL32(10, 10, 10, 255);
+// The only hue in the app: differences found by "Check".
+constexpr ImU32 Green = IM_COL32(74, 222, 128, 255);
+constexpr ImU32 GreenSoft = IM_COL32(74, 222, 128, 18);
+constexpr ImU32 GreenLine = IM_COL32(74, 222, 128, 70);
 } // namespace col
 
 void LoadFonts();

@@ -1,6 +1,7 @@
 // SerialChecker — Win32 window + Direct3D 11 + Dear ImGui.
 // Usage: SerialChecker.exe                 -> UI
 //        SerialChecker.exe --export <file> -> writes a .json (or .txt) report and exits
+//        SerialChecker.exe --compare <file.json> -> UI, compared with that export on startup
 #include "hw/Collector.h"
 #include "io/Exporter.h"
 #include "ui/App.h"
@@ -132,12 +133,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 {
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    std::wstring comparePath;
     for (int i = 1; argv && i + 1 < argc; ++i) {
         if (_wcsicmp(argv[i], L"--export") == 0) {
             std::wstring path = argv[i + 1];
             LocalFree(argv);
             return RunExport(path);
         }
+        if (_wcsicmp(argv[i], L"--compare") == 0) comparePath = argv[i + 1];
     }
     if (argv) LocalFree(argv);
 
@@ -181,6 +184,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     ImGui_ImplDX11_Init(g_device, g_context);
 
     ui::App app(hwnd);
+    if (!comparePath.empty()) app.RequestCheck(comparePath);
     const float clear[4] = { 9 / 255.0f, 9 / 255.0f, 9 / 255.0f, 1.0f };
 
     bool done = false;

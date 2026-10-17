@@ -28,6 +28,11 @@ Everything runs in user mode, no driver.
 - Click any value to copy it to the clipboard.
 - Export the full report to `.txt` or `.json`.
 - Headless export: `SerialChecker.exe --export report.json` (or `.txt`).
+- **Check (compare)**: highlights in green every value that changed since an export.
+  1. Click **Export JSON** (saved on the Desktop by default).
+  2. Later, click **Check**: the app re-reads the hardware and compares it with the newest `serials_*.json` on the Desktop. Changed values turn green with the old value struck through, new fields are tagged `NEW`, and the sidebar shows how many changes each section has.
+  3. **Shift+Check** lets you pick another export file; **Clear** hides the comparison.
+  4. Also available from the command line: `SerialChecker.exe --compare baseline.json`.
 
 ## Build
 

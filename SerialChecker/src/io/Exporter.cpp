@@ -1,4 +1,5 @@
 #include "io/Exporter.h"
+#include "io/Importer.h"
 #include "hw/Util.h"
 
 #include <windows.h>
@@ -111,6 +112,12 @@ std::wstring PickSavePath(void* ownerHwnd, Format format, const hw::Report& repo
     std::wstring name = L"serials_" + hw::Widen(report.computerName) + L"_" + hw::Widen(stamp);
     dlg->SetFileName(name.c_str());
     dlg->SetTitle(json ? L"Export JSON" : L"Export TXT");
+    // Exports land on the Desktop by default: that is where "Check" looks for the latest one.
+    IShellItem* folder = nullptr;
+    if (SUCCEEDED(SHCreateItemFromParsingName(DesktopDir().c_str(), nullptr, IID_PPV_ARGS(&folder)))) {
+        dlg->SetFolder(folder);
+        folder->Release();
+    }
 
     if (SUCCEEDED(dlg->Show((HWND)ownerHwnd))) {
         IShellItem* item = nullptr;

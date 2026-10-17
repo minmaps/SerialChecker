@@ -28,7 +28,9 @@
     <ClCompile Include="src\hw\Monitor.cpp"><Filter>src\hw</Filter></ClCompile>
     <ClCompile Include="src\hw\WindowsIds.cpp"><Filter>src\hw</Filter></ClCompile>
     <ClCompile Include="src\hw\Collector.cpp"><Filter>src\hw</Filter></ClCompile>
+    <ClCompile Include="src\hw\Compare.cpp"><Filter>src\hw</Filter></ClCompile>
     <ClCompile Include="src\io\Exporter.cpp"><Filter>src\io</Filter></ClCompile>
+    <ClCompile Include="src\io\Importer.cpp"><Filter>src\io</Filter></ClCompile>
     <ClCompile Include="..\third_party\imgui\imgui.cpp"><Filter>imgui</Filter></ClCompile>
     <ClCompile Include="..\third_party\imgui\imgui_draw.cpp"><Filter>imgui</Filter></ClCompile>
     <ClCompile Include="..\third_party\imgui\imgui_tables.cpp"><Filter>imgui</Filter></ClCompile>
@@ -44,6 +46,7 @@
     <ClInclude Include="src\hw\Util.h"><Filter>src\hw</Filter></ClInclude>
     <ClInclude Include="src\hw\Collector.h"><Filter>src\hw</Filter></ClInclude>
     <ClInclude Include="src\io\Exporter.h"><Filter>src\io</Filter></ClInclude>
+    <ClInclude Include="src\io\Importer.h"><Filter>src\io</Filter></ClInclude>
     <ClInclude Include="..\third_party\imgui\imgui.h"><Filter>imgui</Filter></ClInclude>
     <ClInclude Include="..\third_party\imgui\imconfig.h"><Filter>imgui</Filter></ClInclude>
     <ClInclude Include="..\third_party\imgui\backends\imgui_impl_win32.h"><Filter>imgui</Filter></ClInclude>

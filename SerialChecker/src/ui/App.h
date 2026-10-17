@@ -19,11 +19,15 @@ public:
 
     // Draws the whole UI. Call between ImGui::NewFrame() and ImGui::Render().
     void Frame(float dpi);
-    // Work that must run outside the ImGui frame (modal Save dialog).
+    // Work that must run outside the ImGui frame (modal Open / Save dialogs).
     void AfterFrame();
+
+    // Re-reads the hardware and compares it with an export. Empty path = newest serials_*.json on the Desktop.
+    void RequestCheck(std::wstring baselinePath = {});
 
 private:
     void DrawHeader(ImDrawList* dl, const ImVec2& origin, float width);
+    void DrawCompareBar(ImDrawList* dl, const ImVec2& origin, float width);
     void DrawSidebar(const ImVec2& origin, const ImVec2& size);
     void DrawContent(const ImVec2& origin, const ImVec2& size);
     void DrawLoading(ImDrawList* dl, const ImVec2& center);
@@ -31,8 +35,9 @@ private:
 
     float MeasureCard(const hw::Card& card, float width) const;
     void DrawCard(ImDrawList* dl, const hw::Card& card, const ImVec2& pos, float width, float height);
-    bool Button(const char* id, const char* label, bool primary);
+    bool Button(const char* id, const char* label, bool primary, bool enabled = true);
 
+    void StartCheck();
     void ShowToast(std::string text);
     float S(float v) const { return v * dpi_; }
 
@@ -49,6 +54,17 @@ private:
     float pinnedScroll_ = -1.0f;    // scroll position reached after a sidebar click
 
     std::optional<io::Format> exportRequest_;
+
+    // Compare ("Check") state
+    bool checkRequest_ = false;
+    bool checkPick_ = false;         // Shift+Check: choose the export file instead of the newest one
+    std::wstring checkPath_;         // explicit baseline (from --compare)
+    std::future<hw::Report> checking_;
+    std::optional<hw::Report> baseline_;
+    std::string baselineName_;
+    bool compareActive_ = false;
+    int changeCount_ = 0;
+
     std::string toast_;
     double toastTime_ = -100.0;
     bool toastPending_ = false;     // start the toast clock on the next frame (after a modal dialog)

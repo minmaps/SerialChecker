@@ -2,6 +2,7 @@
 #include "ui/App.h"
 #include "ui/Theme.h"
 #include "hw/Collector.h"
+#include "io/Importer.h"
 
 #include "imgui.h"
 #include <windows.h>
@@ -18,6 +19,7 @@ using namespace std::chrono_literals;
 constexpr float kHeaderH = 64.0f;
 constexpr float kSidebarW = 208.0f;
 constexpr float kCardHeaderH = 46.0f;
+constexpr float kCompareBarH = 42.0f;
 constexpr float kTextPx = 13.5f;
 constexpr float kMonoPx = 13.0f;
 
@@ -49,11 +51,71 @@ CardMetrics Metrics(float width, float dpi)
 ImFont* ValueFont(const hw::Field& f) { return f.placeholder ? g_fonts.italic : g_fonts.mono; }
 float ValuePx(const hw::Field& f) { return f.placeholder ? kTextPx : kMonoPx; }
 
+// Size of a field row: the value, plus the struck-through previous value when "Check" found a change.
+struct RowLayout {
+    ImVec2 value, prev;
+    float wasW = 0, height = 0;
+};
+
+RowLayout LayoutRow(const hw::Field& f, const CardMetrics& m, float dpi)
+{
+    RowLayout r;
+    r.value = Measure(ValueFont(f), ValuePx(f) * dpi, f.value.c_str(), m.wrap);
+    float h = r.value.y;
+    if (f.diff == hw::Diff::Changed) {
+        r.wasW = Measure(g_fonts.regular, 11.5f * dpi, "was").x + 8 * dpi;
+        r.prev = Measure(g_fonts.mono, 12 * dpi, f.previous.c_str(), m.wrap - r.wasW);
+        h += 5 * dpi + r.prev.y;
+    }
+    r.height = std::max(kTextPx * dpi, h) + m.rowPadY * 2;
+    return r;
+}
+
+std::string FileName(const std::wstring& path)
+{
+    std::wstring file = path.substr(path.find_last_of(L"\\/") + 1);
+    int n = WideCharToMultiByte(CP_UTF8, 0, file.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string utf8(n > 0 ? n - 1 : 0, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, file.c_str(), -1, utf8.data(), n, nullptr, nullptr);
+    return utf8;
+}
+
+std::string Plural(int n, const char* word) { return std::to_string(n) + " " + word + (n == 1 ? "" : "s"); }
+
 } // namespace
 
 App::App(void* hwnd) : hwnd_(hwnd)
 {
     pending_ = std::async(std::launch::async, hw::Collect);
+}
+
+void App::RequestCheck(std::wstring baselinePath)
+{
+    checkPath_ = std::move(baselinePath);
+    checkPick_ = false;
+    checkRequest_ = true;
+}
+
+// Loads the baseline export, then re-reads the hardware in the background; Frame() applies the diff.
+void App::StartCheck()
+{
+    std::wstring path = checkPath_;
+    checkPath_.clear();
+    if (path.empty()) path = checkPick_ ? io::PickOpenPath(hwnd_) : io::FindLatestExport();
+    if (path.empty()) {
+        if (!checkPick_) ShowToast("No serials_*.json on the Desktop: export a JSON first");
+        return;
+    }
+
+    hw::Report base;
+    std::string error;
+    if (!io::ReadReport(path, base, error)) {
+        ShowToast(error + ": " + FileName(path));
+        return;
+    }
+    baseline_ = std::move(base);
+    baselineName_ = FileName(path);
+    checking_ = std::async(std::launch::async, hw::Collect);
 }
 
 void App::ShowToast(std::string text)
@@ -68,6 +130,14 @@ void App::Frame(float dpi)
     if (!report_ && pending_.valid() && pending_.wait_for(0s) == std::future_status::ready) {
         report_ = pending_.get();
         sectionY_.assign(report_->sections.size(), 0.0f);
+    }
+    if (checking_.valid() && checking_.wait_for(0s) == std::future_status::ready) {
+        hw::Report fresh = checking_.get();
+        changeCount_ = hw::ApplyDiff(fresh, *baseline_);
+        report_ = std::move(fresh);
+        sectionY_.resize(report_->sections.size(), 0.0f);
+        compareActive_ = true;
+        ShowToast(changeCount_ ? Plural(changeCount_, "change") + " detected" : std::string("No change since the export"));
     }
     if (toastPending_) {
         toastTime_ = ImGui::GetTime();
@@ -86,7 +156,11 @@ void App::Frame(float dpi)
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
     DrawHeader(dl, vp->Pos, vp->Size.x);
-    const float headerH = S(kHeaderH);
+    float headerH = S(kHeaderH);
+    if (report_ && compareActive_) {
+        DrawCompareBar(dl, vp->Pos + ImVec2(0, headerH), vp->Size.x);
+        headerH += S(kCompareBarH);
+    }
     if (!report_) {
         DrawLoading(dl, vp->Pos + ImVec2(vp->Size.x * 0.5f, headerH + (vp->Size.y - headerH) * 0.45f));
     } else {
@@ -101,32 +175,32 @@ void App::Frame(float dpi)
 
 void App::AfterFrame()
 {
-    if (!exportRequest_ || !report_) return;
+    if (!report_) return;
+
+    if (checkRequest_ && !checking_.valid()) {
+        checkRequest_ = false;
+        StartCheck();
+    }
+
+    if (!exportRequest_) return;
     io::Format format = *exportRequest_;
     exportRequest_.reset();
 
     std::wstring path = io::PickSavePath(hwnd_, format, *report_);
     if (path.empty()) return;
-    if (io::WriteReport(*report_, format, path)) {
-        std::wstring file = path.substr(path.find_last_of(L"\\/") + 1);
-        int n = WideCharToMultiByte(CP_UTF8, 0, file.c_str(), -1, nullptr, 0, nullptr, nullptr);
-        std::string utf8(n > 0 ? n - 1 : 0, '\0');
-        WideCharToMultiByte(CP_UTF8, 0, file.c_str(), -1, utf8.data(), n, nullptr, nullptr);
-        ShowToast("Saved " + utf8);
-    } else {
-        ShowToast("Export failed");
-    }
+    if (io::WriteReport(*report_, format, path)) ShowToast("Saved " + FileName(path));
+    else ShowToast("Export failed");
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-bool App::Button(const char* id, const char* label, bool primary)
+bool App::Button(const char* id, const char* label, bool primary, bool enabled)
 {
     const ImVec2 ts = Measure(g_fonts.semibold, S(13), label);
     const ImVec2 size(ts.x + S(28), S(32));
     const ImVec2 p = ImGui::GetCursorScreenPos();
-    bool clicked = ImGui::InvisibleButton(id, size);
-    bool hovered = ImGui::IsItemHovered(), active = ImGui::IsItemActive();
+    bool clicked = ImGui::InvisibleButton(id, size) && enabled;
+    bool hovered = ImGui::IsItemHovered() && enabled, active = ImGui::IsItemActive() && enabled;
     if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -137,7 +211,8 @@ bool App::Button(const char* id, const char* label, bool primary)
         dl->AddRectFilled(p, p + size, hovered ? col::SurfaceHover : col::Bg, S(7));
         dl->AddRect(p, p + size, hovered ? col::BorderStrong : col::Border, S(7));
     }
-    dl->AddText(g_fonts.semibold, S(13), p + (size - ts) * 0.5f, primary ? col::Black : col::Text, label);
+    ImU32 tc = primary ? col::Black : enabled ? col::Text : col::Label;
+    dl->AddText(g_fonts.semibold, S(13), p + (size - ts) * 0.5f, tc, label);
     return clicked;
 }
 
@@ -177,6 +252,16 @@ void App::DrawHeader(ImDrawList* dl, const ImVec2& o, float width)
     rx -= S(8);
     place("Export TXT");
     if (Button("##txt", "Export TXT", false)) exportRequest_ = io::Format::Text;
+    rx -= S(8);
+
+    // Check: re-read the hardware and diff it against the newest export on the Desktop (Shift = pick a file).
+    const bool busy = checking_.valid();
+    const char* checkLabel = busy ? "Checking\xE2\x80\xA6" : "Check";
+    place(checkLabel);
+    if (Button("##check", checkLabel, false, !busy)) {
+        checkRequest_ = true;
+        checkPick_ = ImGui::GetIO().KeyShift;
+    }
 
     // Privilege status: filled dot = elevated, hollow dot = limited.
     const bool admin = report_->elevated;
@@ -187,6 +272,49 @@ void App::DrawHeader(ImDrawList* dl, const ImVec2& o, float width)
     const ImVec2 dot(rx - S(10), cy);
     if (admin) dl->AddCircleFilled(dot, S(3.5f), col::White);
     else dl->AddCircle(dot, S(3.5f), col::Label, 0, S(1.2f));
+}
+
+// Strip under the header while a comparison is shown: result, baseline file, and a Clear action.
+void App::DrawCompareBar(ImDrawList* dl, const ImVec2& o, float width)
+{
+    const float h = S(kCompareBarH);
+    dl->AddRectFilled(o, o + ImVec2(width, h), col::Surface);
+    dl->AddLine(o + ImVec2(0, h - 1), o + ImVec2(width, h - 1), col::Border);
+    const float cy = o.y + h * 0.5f;
+
+    float x = o.x + S(24);
+    const bool any = changeCount_ > 0;
+    if (any) dl->AddCircleFilled(ImVec2(x + S(4), cy), S(4), col::Green);
+    else dl->AddCircle(ImVec2(x + S(4), cy), S(4), col::Label, 0, S(1.2f));
+    x += S(18);
+
+    std::string result = any ? Plural(changeCount_, "change") : std::string("No change");
+    ImVec2 rs = Measure(g_fonts.semibold, S(13), result.c_str());
+    dl->AddText(g_fonts.semibold, S(13), ImVec2(x, cy - rs.y * 0.5f), any ? col::Green : col::Text, result.c_str());
+    x += rs.x + S(10);
+
+    std::string detail = "since " + baselineName_;
+    if (baseline_ && !baseline_->capturedAt.empty()) detail += "  \xC2\xB7  exported " + baseline_->capturedAt;
+    ImVec2 ds = Measure(g_fonts.regular, S(13), detail.c_str());
+    dl->AddText(g_fonts.regular, S(13), ImVec2(x, cy - ds.y * 0.5f), col::Label, detail.c_str());
+
+    // "Clear" text button on the right
+    const char* clear = "Clear";
+    const ImVec2 cs = Measure(g_fonts.semibold, S(13), clear);
+    const ImVec2 cp(o.x + width - S(24) - cs.x - S(16), cy - S(13));
+    ImGui::SetCursorScreenPos(cp);
+    bool clicked = ImGui::InvisibleButton("##clear", ImVec2(cs.x + S(16), S(26)));
+    bool hovered = ImGui::IsItemHovered();
+    if (hovered) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        dl->AddRectFilled(cp, cp + ImVec2(cs.x + S(16), S(26)), col::SurfaceHover, S(6));
+    }
+    dl->AddText(g_fonts.semibold, S(13), cp + ImVec2(S(8), (S(26) - cs.y) * 0.5f), hovered ? col::Text : col::TextDim, clear);
+    if (clicked) {
+        hw::ClearDiff(*report_);
+        compareActive_ = false;
+        changeCount_ = 0;
+    }
 }
 
 void App::DrawSidebar(const ImVec2& o, const ImVec2& size)
@@ -218,15 +346,18 @@ void App::DrawSidebar(const ImVec2& o, const ImVec2& size)
         dl->AddText(active ? g_fonts.semibold : g_fonts.regular, S(13.5f), p + ImVec2(S(12), (sz.y - ts.y) * 0.5f), tc,
                     section.name.c_str());
 
-        std::string count = std::to_string(section.cards.size());
+        // Card count, or the number of differences in green while comparing.
+        const bool changed = section.changes > 0;
+        std::string count = std::to_string(changed ? section.changes : (int)section.cards.size());
         const ImVec2 cs = Measure(g_fonts.mono, S(11.5f), count.c_str());
-        dl->AddText(g_fonts.mono, S(11.5f), ImVec2(p.x + sz.x - S(12) - cs.x, p.y + (sz.y - cs.y) * 0.5f),
-                    active ? col::Label : col::Muted, count.c_str());
+        const ImVec2 cpos(p.x + sz.x - S(12) - cs.x, p.y + (sz.y - cs.y) * 0.5f);
+        if (changed) dl->AddCircleFilled(ImVec2(cpos.x - S(8), p.y + sz.y * 0.5f), S(3), col::Green);
+        dl->AddText(g_fonts.mono, S(11.5f), cpos, changed ? col::Green : active ? col::Label : col::Muted, count.c_str());
         y += S(34);
     }
 
-    const char* hint = "Click a value to copy";
-    dl->AddText(g_fonts.regular, S(12), ImVec2(o.x + S(24), o.y + size.y - S(34)), col::Muted, hint);
+    dl->AddText(g_fonts.regular, S(12), ImVec2(o.x + S(24), o.y + size.y - S(52)), col::Muted, "Click a value to copy");
+    dl->AddText(g_fonts.regular, S(12), ImVec2(o.x + S(24), o.y + size.y - S(34)), col::Muted, "Shift+Check: pick a file");
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -235,8 +366,7 @@ float App::MeasureCard(const hw::Card& card, float width) const
 {
     const CardMetrics m = Metrics(width, dpi_);
     float h = S(kCardHeaderH) + S(6);
-    for (const auto& f : card.fields)
-        h += std::max(S(kTextPx), Measure(ValueFont(f), S(ValuePx(f)), f.value.c_str(), m.wrap).y) + m.rowPadY * 2;
+    for (const auto& f : card.fields) h += LayoutRow(f, m, dpi_).height;
     return h + S(6);
 }
 
@@ -257,6 +387,16 @@ void App::DrawCard(ImDrawList* dl, const hw::Card& card, const ImVec2& p, float 
         dl->AddText(g_fonts.mono, S(11), bp + (bsize - bs) * 0.5f, col::Label, card.badge.c_str());
         titleRight = bp.x - S(10);
     }
+    if (card.changes > 0) {
+        const std::string text = std::to_string(card.changes) + " changed";
+        const ImVec2 gs = Measure(g_fonts.semibold, S(11.5f), text.c_str());
+        const ImVec2 gsize(gs.x + S(14), S(20));
+        const ImVec2 gp(titleRight - gsize.x + S(2), p.y + (headerH - gsize.y) * 0.5f);
+        dl->AddRectFilled(gp, gp + gsize, col::GreenSoft, S(5));
+        dl->AddRect(gp, gp + gsize, col::GreenLine, S(5));
+        dl->AddText(g_fonts.semibold, S(11.5f), gp + (gsize - gs) * 0.5f, col::Green, text.c_str());
+        titleRight = gp.x - S(10);
+    }
 
     const ImVec2 ts = Measure(g_fonts.semibold, S(13.5f), card.title.c_str());
     dl->PushClipRect(p, ImVec2(titleRight, p.y + headerH), true);
@@ -270,8 +410,10 @@ void App::DrawCard(ImDrawList* dl, const hw::Card& card, const ImVec2& p, float 
         const auto& f = card.fields[j];
         ImFont* vf = ValueFont(f);
         const float vpx = S(ValuePx(f));
-        const ImVec2 vs = Measure(vf, vpx, f.value.c_str(), m.wrap);
-        const float rowH = std::max(S(kTextPx), vs.y) + m.rowPadY * 2;
+        const RowLayout lay = LayoutRow(f, m, dpi_);
+        const ImVec2 vs = lay.value;
+        const float rowH = lay.height;
+        const bool diff = f.diff != hw::Diff::None;
         const ImVec2 rmin(p.x + S(6), y), rmax(p.x + w - S(6), y + rowH);
 
         ImGui::SetCursorScreenPos(rmin);
@@ -284,6 +426,10 @@ void App::DrawCard(ImDrawList* dl, const hw::Card& card, const ImVec2& p, float 
         if (hovered) dl->AddRectFilled(rmin, rmax, held ? col::BorderStrong : col::SurfaceHover, S(6));
         else if (j + 1 < (int)card.fields.size())
             dl->AddLine(ImVec2(p.x + m.padX, rmax.y), ImVec2(p.x + w - m.padX, rmax.y), col::Hairline);
+        if (diff) {
+            dl->AddRectFilled(rmin + ImVec2(0, S(2)), rmax - ImVec2(0, S(2)), col::GreenSoft, S(6));
+            dl->AddRectFilled(ImVec2(rmin.x, rmin.y + S(8)), ImVec2(rmin.x + S(2), rmax.y - S(8)), col::Green, S(1));
+        }
 
         const float textY = y + m.rowPadY;
         dl->PushClipRect(ImVec2(p.x, y), ImVec2(p.x + m.padX + m.labelW - S(12), rmax.y), true);
@@ -293,7 +439,21 @@ void App::DrawCard(ImDrawList* dl, const hw::Card& card, const ImVec2& p, float 
         // Mono glyphs sit slightly higher than Segoe UI at the same box: nudge to share a baseline.
         const float vx = p.x + m.padX + m.labelW;
         const float vy = textY + (f.placeholder ? 0.0f : S(1));
-        dl->AddText(vf, vpx, ImVec2(vx, vy), f.placeholder ? col::Muted : col::Text, f.value.c_str(), nullptr, m.wrap);
+        const ImU32 valueCol = diff ? col::Green : f.placeholder ? col::Muted : col::Text;
+        dl->AddText(vf, vpx, ImVec2(vx, vy), valueCol, f.value.c_str(), nullptr, m.wrap);
+
+        if (f.diff == hw::Diff::Changed) {
+            // "was  <old value>" under the new one, struck through.
+            const float py = vy + vs.y + S(5);
+            dl->AddText(g_fonts.regular, S(11.5f), ImVec2(vx, py + S(0.5f)), col::Muted, "was");
+            const float px = vx + lay.wasW;
+            dl->AddText(g_fonts.mono, S(12), ImVec2(px, py), col::Label, f.previous.c_str(), nullptr, m.wrap - lay.wasW);
+            if (lay.prev.y < S(12) * 1.6f)
+                dl->AddLine(ImVec2(px, py + lay.prev.y * 0.55f), ImVec2(px + lay.prev.x, py + lay.prev.y * 0.55f), col::Label);
+        } else if (f.diff == hw::Diff::Added && !hovered) {
+            const ImVec2 ns = Measure(g_fonts.semibold, S(11), "NEW");
+            dl->AddText(g_fonts.semibold, S(11), ImVec2(p.x + w - m.padX - ns.x, textY + S(1.5f)), col::Green, "NEW");
+        }
 
         if (hovered) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -354,6 +514,12 @@ void App::DrawContent(const ImVec2& o, const ImVec2& size)
         std::string count = std::to_string(section.cards.size());
         const ImVec2 cs = Measure(g_fonts.mono, S(12), count.c_str());
         dl->AddText(g_fonts.mono, S(12), ImVec2(hp.x + ns.x + S(10), hp.y + ns.y - cs.y - S(2)), col::Muted, count.c_str());
+        if (section.changes > 0) {
+            std::string changed = Plural(section.changes, "change");
+            const ImVec2 gs = Measure(g_fonts.semibold, S(12.5f), changed.c_str());
+            dl->AddText(g_fonts.semibold, S(12.5f), ImVec2(hp.x + ns.x + cs.x + S(24), hp.y + ns.y - gs.y - S(1)), col::Green,
+                        changed.c_str());
+        }
         ImGui::Dummy(ImVec2(innerW, ns.y + S(14)));
 
         for (size_t c = 0; c < section.cards.size(); c += cols) {

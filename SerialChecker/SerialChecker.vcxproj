@@ -92,7 +92,9 @@
     <ClCompile Include="src\hw\Monitor.cpp" />
     <ClCompile Include="src\hw\WindowsIds.cpp" />
     <ClCompile Include="src\hw\Collector.cpp" />
+    <ClCompile Include="src\hw\Compare.cpp" />
     <ClCompile Include="src\io\Exporter.cpp" />
+    <ClCompile Include="src\io\Importer.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui_draw.cpp" />
     <ClCompile Include="..\third_party\imgui\imgui_tables.cpp" />
@@ -108,6 +110,7 @@
     <ClInclude Include="src\hw\Util.h" />
     <ClInclude Include="src\hw\Collector.h" />
     <ClInclude Include="src\io\Exporter.h" />
+    <ClInclude Include="src\io\Importer.h" />
     <ClInclude Include="..\third_party\imgui\imgui.h" />
     <ClInclude Include="..\third_party\imgui\imconfig.h" />
     <ClInclude Include="..\third_party\imgui\backends\imgui_impl_win32.h" />
