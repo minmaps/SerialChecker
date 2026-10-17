@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="src">
+      <UniqueIdentifier>{1A2B3C4D-0001-4000-8000-000000000001}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\ui">
+      <UniqueIdentifier>{1A2B3C4D-0002-4000-8000-000000000002}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\hw">
+      <UniqueIdentifier>{1A2B3C4D-0003-4000-8000-000000000003}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\io">
+      <UniqueIdentifier>{1A2B3C4D-0004-4000-8000-000000000004}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="imgui">
+      <UniqueIdentifier>{1A2B3C4D-0005-4000-8000-000000000005}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\main.cpp"><Filter>src</Filter></ClCompile>
+    <ClCompile Include="src\ui\App.cpp"><Filter>src\ui</Filter></ClCompile>
+    <ClCompile Include="src\ui\Theme.cpp"><Filter>src\ui</Filter></ClCompile>
+    <ClCompile Include="src\hw\Util.cpp"><Filter>src\hw</Filter></ClCompile>
+    <ClCompile Include="src\hw\Smbios.cpp"><Filter>src\hw</Filter></ClCompile>
+    <ClCompile Include="src\hw\Disk.cpp"><Filter>src\hw</Filter></ClCompile>
+    <ClCompile Include="src\hw\Network.cpp"><Filter>src\hw</Filter></ClCompile>
+    <ClCompile Include="src\hw\Monitor.cpp"><Filter>src\hw</Filter></ClCompile>
+    <ClCompile Include="src\hw\WindowsIds.cpp"><Filter>src\hw</Filter></ClCompile>
+    <ClCompile Include="src\hw\Collector.cpp"><Filter>src\hw</Filter></ClCompile>
+    <ClCompile Include="src\io\Exporter.cpp"><Filter>src\io</Filter></ClCompile>
+    <ClCompile Include="..\third_party\imgui\imgui.cpp"><Filter>imgui</Filter></ClCompile>
+    <ClCompile Include="..\third_party\imgui\imgui_draw.cpp"><Filter>imgui</Filter></ClCompile>
+    <ClCompile Include="..\third_party\imgui\imgui_tables.cpp"><Filter>imgui</Filter></ClCompile>
+    <ClCompile Include="..\third_party\imgui\imgui_widgets.cpp"><Filter>imgui</Filter></ClCompile>
+    <ClCompile Include="..\third_party\imgui\imgui_demo.cpp"><Filter>imgui</Filter></ClCompile>
+    <ClCompile Include="..\third_party\imgui\backends\imgui_impl_win32.cpp"><Filter>imgui</Filter></ClCompile>
+    <ClCompile Include="..\third_party\imgui\backends\imgui_impl_dx11.cpp"><Filter>imgui</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\ui\App.h"><Filter>src\ui</Filter></ClInclude>
+    <ClInclude Include="src\ui\Theme.h"><Filter>src\ui</Filter></ClInclude>
+    <ClInclude Include="src\hw\Types.h"><Filter>src\hw</Filter></ClInclude>
+    <ClInclude Include="src\hw\Util.h"><Filter>src\hw</Filter></ClInclude>
+    <ClInclude Include="src\hw\Collector.h"><Filter>src\hw</Filter></ClInclude>
+    <ClInclude Include="src\io\Exporter.h"><Filter>src\io</Filter></ClInclude>
+    <ClInclude Include="..\third_party\imgui\imgui.h"><Filter>imgui</Filter></ClInclude>
+    <ClInclude Include="..\third_party\imgui\imconfig.h"><Filter>imgui</Filter></ClInclude>
+    <ClInclude Include="..\third_party\imgui\backends\imgui_impl_win32.h"><Filter>imgui</Filter></ClInclude>
+    <ClInclude Include="..\third_party\imgui\backends\imgui_impl_dx11.h"><Filter>imgui</Filter></ClInclude>
+  </ItemGroup>
+</Project>
