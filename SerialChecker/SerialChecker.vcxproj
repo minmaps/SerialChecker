@@ -52,7 +52,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;dwmapi.lib;setupapi.lib;iphlpapi.lib;shell32.lib;ole32.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;dwmapi.lib;setupapi.lib;iphlpapi.lib;shell32.lib;ole32.lib;advapi32.lib;tbs.lib;ncrypt.lib;crypt32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>RequireAdministrator</UACExecutionLevel>
     </Link>
     <Manifest>
@@ -90,6 +90,7 @@
     <ClCompile Include="src\hw\Disk.cpp" />
     <ClCompile Include="src\hw\Network.cpp" />
     <ClCompile Include="src\hw\Monitor.cpp" />
+    <ClCompile Include="src\hw\Tpm.cpp" />
     <ClCompile Include="src\hw\WindowsIds.cpp" />
     <ClCompile Include="src\hw\Collector.cpp" />
     <ClCompile Include="src\hw\Compare.cpp" />

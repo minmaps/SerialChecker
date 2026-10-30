@@ -24,9 +24,11 @@ bool IsProcessElevated();
 // Registry helpers (HKLM, 64-bit view). Return empty string when missing.
 std::string RegReadString(const wchar_t* subKey, const wchar_t* valueName);
 bool RegReadDword(const wchar_t* subKey, const wchar_t* valueName, uint32_t& out);
+std::vector<uint8_t> RegReadBinary(const wchar_t* subKey, const wchar_t* valueName);
 
 // Probing functions, one per hardware family. Each appends its sections.
 void CollectSmbios(std::vector<Section>& out);
+void CollectTpm(std::vector<Section>& out);
 void CollectDisks(std::vector<Section>& out);
 void CollectNetwork(std::vector<Section>& out);
 void CollectMonitors(std::vector<Section>& out);

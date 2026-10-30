@@ -23,6 +23,7 @@ Report Collect()
     r.capturedAt = buf;
 
     CollectSmbios(r.sections);
+    CollectTpm(r.sections);
     CollectDisks(r.sections);
     CollectNetwork(r.sections);
     CollectMonitors(r.sections);

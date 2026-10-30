@@ -14,6 +14,7 @@ Grab `SerialChecker.exe` from the [latest release](../../releases/latest). It as
 | Baseboard, Chassis | SMBIOS | Manufacturer, product, serial, asset tag |
 | Processor | SMBIOS | Model, Processor ID, serial, part number, socket |
 | Memory | SMBIOS type 17 | Part number, serial, size, speed per module |
+| TPM | TBS (`TPM2_GetCapability`, `TPM2_ReadPublic`), Platform Crypto Provider, registry | Manufacturer, firmware, EK public key hash through each path, EK certificate, SRK / Windows AIK hashes |
 | Disks | `IOCTL_STORAGE_QUERY_PROPERTY`, `SMART_RCV_DRIVE_DATA`, SCSI / ATA pass-through, NVMe Identify | Model, serial through each path, WWN, firmware, capacity |
 | Volumes | `GetVolumeInformation` | Volume serial and GUID |
 | Network | IP Helper, NDIS OID, registry | Current / permanent / overridden MAC |
@@ -22,6 +23,8 @@ Grab `SerialChecker.exe` from the [latest release](../../releases/latest). It as
 | Windows | Registry | MachineGuid, ProductId, HwProfileGuid, SQM MachineId, SusClientId |
 
 Everything runs in user mode, no driver.
+
+TPM key hashes are the SHA-256 of the RSA public key (DER), the same value as `PublicKeyHash` in `Get-TpmEndorsementKeyInfo -HashAlgorithm sha256`.
 
 ## Features
 

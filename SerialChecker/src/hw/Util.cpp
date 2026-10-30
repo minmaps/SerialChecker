@@ -129,4 +129,16 @@ bool RegReadDword(const wchar_t* subKey, const wchar_t* valueName, uint32_t& out
     return true;
 }
 
+std::vector<uint8_t> RegReadBinary(const wchar_t* subKey, const wchar_t* valueName)
+{
+    const DWORD flags = RRF_RT_REG_BINARY | RRF_SUBKEY_WOW6464KEY;
+    DWORD size = 0;
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, subKey, valueName, flags, nullptr, nullptr, &size) != ERROR_SUCCESS || !size)
+        return {};
+    std::vector<uint8_t> data(size);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, subKey, valueName, flags, nullptr, data.data(), &size) != ERROR_SUCCESS) return {};
+    data.resize(size);
+    return data;
+}
+
 } // namespace hw
