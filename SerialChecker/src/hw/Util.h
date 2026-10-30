@@ -32,6 +32,7 @@ void CollectTpm(std::vector<Section>& out);
 void CollectDisks(std::vector<Section>& out);
 void CollectNetwork(std::vector<Section>& out);
 void CollectMonitors(std::vector<Section>& out);
+void CollectGraphics(std::vector<Section>& out);
 void CollectWindows(std::vector<Section>& out);
 
 } // namespace hw

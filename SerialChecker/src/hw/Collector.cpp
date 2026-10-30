@@ -27,6 +27,7 @@ Report Collect()
     CollectDisks(r.sections);
     CollectNetwork(r.sections);
     CollectMonitors(r.sections);
+    CollectGraphics(r.sections);
     CollectWindows(r.sections);
     return r;
 }

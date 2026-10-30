@@ -1,35 +1,13 @@
-// Windows-side identifiers (registry / hardware profile) and graphics adapters (DXGI).
+// Windows-side identifiers (registry / hardware profile).
 #include "hw/Util.h"
 
 #include <windows.h>
-#include <dxgi.h>
 #include <ctime>
 
 namespace hw {
 
 void CollectWindows(std::vector<Section>& out)
 {
-    // GPU
-    Section gpu{ "Graphics" };
-    IDXGIFactory1* factory = nullptr;
-    if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory))) {
-        IDXGIAdapter1* adapter = nullptr;
-        for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
-            DXGI_ADAPTER_DESC1 d{};
-            adapter->GetDesc1(&d);
-            adapter->Release();
-            if (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
-            Card c{ Narrow(d.Description), "DXGI" };
-            c.fields.push_back(MakeField("Vendor / Device", Format("VEN_%04X  DEV_%04X", d.VendorId, d.DeviceId)));
-            c.fields.push_back(MakeField("Subsystem", Format("SUBSYS_%08X  REV_%02X", d.SubSysId, d.Revision)));
-            c.fields.push_back(MakeField("Dedicated VRAM", Format("%llu MB", (unsigned long long)d.DedicatedVideoMemory >> 20)));
-            c.fields.push_back(MakeField("Adapter LUID", Format("%08lX-%08lX", d.AdapterLuid.HighPart, d.AdapterLuid.LowPart)));
-            gpu.cards.push_back(std::move(c));
-        }
-        factory->Release();
-    }
-    if (!gpu.cards.empty()) out.push_back(std::move(gpu));
-
     // Windows
     Section win{ "Windows" };
     const wchar_t* cv = L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";

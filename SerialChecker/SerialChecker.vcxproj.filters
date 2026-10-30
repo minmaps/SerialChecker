@@ -27,6 +27,7 @@
     <ClCompile Include="src\hw\Network.cpp"><Filter>src\hw</Filter></ClCompile>
     <ClCompile Include="src\hw\Monitor.cpp"><Filter>src\hw</Filter></ClCompile>
     <ClCompile Include="src\hw\Tpm.cpp"><Filter>src\hw</Filter></ClCompile>
+    <ClCompile Include="src\hw\Gpu.cpp"><Filter>src\hw</Filter></ClCompile>
     <ClCompile Include="src\hw\WindowsIds.cpp"><Filter>src\hw</Filter></ClCompile>
     <ClCompile Include="src\hw\Collector.cpp"><Filter>src\hw</Filter></ClCompile>
     <ClCompile Include="src\hw\Compare.cpp"><Filter>src\hw</Filter></ClCompile>

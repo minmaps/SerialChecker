@@ -91,6 +91,7 @@
     <ClCompile Include="src\hw\Network.cpp" />
     <ClCompile Include="src\hw\Monitor.cpp" />
     <ClCompile Include="src\hw\Tpm.cpp" />
+    <ClCompile Include="src\hw\Gpu.cpp" />
     <ClCompile Include="src\hw\WindowsIds.cpp" />
     <ClCompile Include="src\hw\Collector.cpp" />
     <ClCompile Include="src\hw\Compare.cpp" />

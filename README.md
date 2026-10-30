@@ -19,7 +19,7 @@ Grab `SerialChecker.exe` from the [latest release](../../releases/latest). It as
 | Volumes | `GetVolumeInformation` | Volume serial and GUID |
 | Network | IP Helper, NDIS OID, registry | Current / permanent / overridden MAC |
 | Monitors | EDID (SetupAPI) | Manufacturer, model, serial, ID serial, refresh rate |
-| Graphics | DXGI | Vendor / device / subsystem IDs, VRAM |
+| Graphics | DXGI, NVML, Vulkan | Vendor / device / subsystem IDs, GPU UUID (NVML for NVIDIA, Vulkan for any vendor), VRAM |
 | Windows | Registry | MachineGuid, ProductId, HwProfileGuid, SQM MachineId, SusClientId |
 
 Everything runs in user mode, no driver.
