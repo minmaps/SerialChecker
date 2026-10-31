@@ -17,6 +17,48 @@ struct HandleCloser {
 };
 using UniqueHandle = std::unique_ptr<void, HandleCloser>;
 
+// IOCTLs go through an overlapped handle with a deadline: a drive that stops answering (crashed SSD firmware,
+// dying disk) would otherwise block the whole collection forever. After one timeout the drive is skipped.
+class Drive {
+public:
+    explicit Drive(HANDLE h) : h_(h) {}
+    bool hung = false;
+
+    bool Ioctl(DWORD code, const void* in, DWORD inSize, void* out, DWORD outSize, DWORD* returned)
+    {
+        if (hung) return false;
+        // The output buffer lives on the heap: a request the driver never completes must not write into freed memory.
+        struct Request {
+            OVERLAPPED ov{};
+            std::vector<BYTE> out;
+        };
+        auto* r = new Request;
+        r->out.resize(outSize);
+        r->ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        BOOL ok = DeviceIoControl(h_, code, const_cast<void*>(in), inSize, r->out.data(), outSize, nullptr, &r->ov);
+        if (ok || GetLastError() == ERROR_IO_PENDING) {
+            if (WaitForSingleObject(r->ov.hEvent, kTimeoutMs) == WAIT_TIMEOUT) {
+                hung = true;
+                CancelIoEx(h_, &r->ov);
+                if (WaitForSingleObject(r->ov.hEvent, 1000) == WAIT_TIMEOUT) return false;  // leak r: still owned by the driver
+            }
+            DWORD n = 0;
+            ok = GetOverlappedResult(h_, &r->ov, &n, FALSE);
+            if (ok) {
+                if (out && n) memcpy(out, r->out.data(), n);
+                *returned = n;
+            }
+        }
+        CloseHandle(r->ov.hEvent);
+        delete r;
+        return ok;
+    }
+
+private:
+    static constexpr DWORD kTimeoutMs = 10000;  // generous: a sleeping HDD has to spin up first
+    HANDLE h_;
+};
+
 // ATA IDENTIFY strings are stored as big-endian 16-bit words.
 std::string AtaString(const BYTE* identify, int firstWord, int lastWord)
 {
@@ -61,13 +103,13 @@ struct DeviceInfo {
     STORAGE_BUS_TYPE bus = BusTypeUnknown;
 };
 
-DeviceInfo QueryDeviceProperty(HANDLE h)
+DeviceInfo QueryDeviceProperty(Drive& drive)
 {
     DeviceInfo info;
     STORAGE_PROPERTY_QUERY q{ StorageDeviceProperty, PropertyStandardQuery };
     std::vector<BYTE> buf(4096);
     DWORD ret = 0;
-    if (!DeviceIoControl(h, IOCTL_STORAGE_QUERY_PROPERTY, &q, sizeof(q), buf.data(), (DWORD)buf.size(), &ret, nullptr))
+    if (!drive.Ioctl(IOCTL_STORAGE_QUERY_PROPERTY, &q, sizeof(q), buf.data(), (DWORD)buf.size(), &ret))
         return info;
     auto* d = (const STORAGE_DEVICE_DESCRIPTOR*)buf.data();
     info.ok = true;
@@ -80,12 +122,12 @@ DeviceInfo QueryDeviceProperty(HANDLE h)
 }
 
 // Picks the most meaningful unique identifier (NAA > EUI-64 > SCSI name string) and dumps it as hex.
-Field QueryWwn(HANDLE h)
+Field QueryWwn(Drive& drive)
 {
     STORAGE_PROPERTY_QUERY q{ StorageDeviceIdProperty, PropertyStandardQuery };
     std::vector<BYTE> buf(4096);
     DWORD ret = 0;
-    if (!DeviceIoControl(h, IOCTL_STORAGE_QUERY_PROPERTY, &q, sizeof(q), buf.data(), (DWORD)buf.size(), &ret, nullptr))
+    if (!drive.Ioctl(IOCTL_STORAGE_QUERY_PROPERTY, &q, sizeof(q), buf.data(), (DWORD)buf.size(), &ret))
         return Unsupported("STORAGE_QUERY_WWN");
 
     auto* desc = (const STORAGE_DEVICE_ID_DESCRIPTOR*)buf.data();
@@ -117,7 +159,7 @@ Field QueryWwn(HANDLE h)
     return MakeField("STORAGE_QUERY_WWN", HexBytes(best->Identifier, len));
 }
 
-Field QuerySmart(HANDLE h)
+Field QuerySmart(Drive& drive)
 {
     SENDCMDINPARAMS in{};
     in.cBufferSize = IDENTIFY_BUFFER_SIZE;
@@ -127,14 +169,13 @@ Field QuerySmart(HANDLE h)
     in.irDriveRegs.bCommandReg = ID_CMD;
     std::vector<BYTE> out(sizeof(SENDCMDOUTPARAMS) + IDENTIFY_BUFFER_SIZE);
     DWORD ret = 0;
-    if (!DeviceIoControl(h, SMART_RCV_DRIVE_DATA, &in, sizeof(SENDCMDINPARAMS) - 1, out.data(), (DWORD)out.size(), &ret,
-                         nullptr))
+    if (!drive.Ioctl(SMART_RCV_DRIVE_DATA, &in, sizeof(SENDCMDINPARAMS) - 1, out.data(), (DWORD)out.size(), &ret))
         return Unsupported("SMART_RCV_DRIVE_DATA");
     auto* res = (const SENDCMDOUTPARAMS*)out.data();
     return MakeField("SMART_RCV_DRIVE_DATA", AtaString(res->bBuffer, 10, 19));
 }
 
-Field QueryScsiPassThrough(HANDLE h)
+Field QueryScsiPassThrough(Drive& drive)
 {
     struct Buffer {
         SCSI_PASS_THROUGH spt;
@@ -155,14 +196,14 @@ Field QueryScsiPassThrough(HANDLE h)
     b.spt.Cdb[2] = 0x80;               // Unit Serial Number page
     b.spt.Cdb[4] = sizeof(b.data);
     DWORD ret = 0;
-    if (!DeviceIoControl(h, IOCTL_SCSI_PASS_THROUGH, &b, sizeof(b), &b, sizeof(b), &ret, nullptr) || b.spt.ScsiStatus != 0)
+    if (!drive.Ioctl(IOCTL_SCSI_PASS_THROUGH, &b, sizeof(b), &b, sizeof(b), &ret) || b.spt.ScsiStatus != 0)
         return Unsupported("SCSI_PASS_THROUGH");
     if (b.data[1] != 0x80) return Unsupported("SCSI_PASS_THROUGH", "Invalid page");
     size_t len = std::min<size_t>(b.data[3], sizeof(b.data) - 4);
     return MakeField("SCSI_PASS_THROUGH", std::string((const char*)b.data + 4, len));
 }
 
-Field QueryAtaPassThrough(HANDLE h)
+Field QueryAtaPassThrough(Drive& drive)
 {
     struct Buffer {
         ATA_PASS_THROUGH_EX apt;
@@ -176,12 +217,12 @@ Field QueryAtaPassThrough(HANDLE h)
     b.apt.DataBufferOffset = offsetof(Buffer, data);
     b.apt.CurrentTaskFile[6] = 0xEC;   // IDENTIFY DEVICE
     DWORD ret = 0;
-    if (!DeviceIoControl(h, IOCTL_ATA_PASS_THROUGH, &b, sizeof(b), &b, sizeof(b), &ret, nullptr))
+    if (!drive.Ioctl(IOCTL_ATA_PASS_THROUGH, &b, sizeof(b), &b, sizeof(b), &ret))
         return Unsupported("ATA_PASS_THROUGH");
     return MakeField("ATA_PASS_THROUGH", AtaString(b.data, 10, 19));
 }
 
-Field QueryNvmeIdentify(HANDLE h)
+Field QueryNvmeIdentify(Drive& drive)
 {
     constexpr DWORD kIdentifySize = 4096;
     const size_t len = offsetof(STORAGE_PROPERTY_QUERY, AdditionalParameters) + sizeof(STORAGE_PROTOCOL_SPECIFIC_DATA) +
@@ -199,7 +240,7 @@ Field QueryNvmeIdentify(HANDLE h)
     proto->ProtocolDataLength = kIdentifySize;
 
     DWORD ret = 0;
-    if (!DeviceIoControl(h, IOCTL_STORAGE_QUERY_PROPERTY, buf.data(), (DWORD)len, buf.data(), (DWORD)len, &ret, nullptr))
+    if (!drive.Ioctl(IOCTL_STORAGE_QUERY_PROPERTY, buf.data(), (DWORD)len, buf.data(), (DWORD)len, &ret))
         return Unsupported("NVME_IDENTIFY");
     auto* desc = (const STORAGE_PROTOCOL_DATA_DESCRIPTOR*)buf.data();
     const auto* res = &desc->ProtocolSpecificData;
@@ -209,11 +250,11 @@ Field QueryNvmeIdentify(HANDLE h)
     return MakeField("NVME_IDENTIFY", std::string((const char*)id + 4, 20));  // SN: bytes 4..23
 }
 
-std::string Capacity(HANDLE h)
+std::string Capacity(Drive& drive)
 {
     GET_LENGTH_INFORMATION len{};
     DWORD ret = 0;
-    if (!DeviceIoControl(h, IOCTL_DISK_GET_LENGTH_INFO, nullptr, 0, &len, sizeof(len), &ret, nullptr)) return {};
+    if (!drive.Ioctl(IOCTL_DISK_GET_LENGTH_INFO, nullptr, 0, &len, sizeof(len), &ret)) return {};
     double gb = (double)len.Length.QuadPart / 1e9;
     return gb >= 1000 ? Format("%.2f TB", gb / 1000) : Format("%.0f GB", gb);
 }
@@ -256,13 +297,15 @@ void CollectDisks(std::vector<Section>& out)
         swprintf_s(path, L"\\\\.\\PhysicalDrive%d", i);
         // Pass-through requires read/write access (admin); fall back to a query-only handle.
         UniqueHandle h(CreateFileW(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                                   OPEN_EXISTING, 0, nullptr));
+                                   OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr));
         bool fullAccess = h.get() != INVALID_HANDLE_VALUE;
         if (!fullAccess)
-            h.reset(CreateFileW(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr));
+            h.reset(CreateFileW(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED,
+                                nullptr));
         if (h.get() == INVALID_HANDLE_VALUE) continue;
+        Drive drive(h.get());
 
-        DeviceInfo info = QueryDeviceProperty(h.get());
+        DeviceInfo info = QueryDeviceProperty(drive);
         std::string model = info.product;
         if (!info.vendor.empty() && info.vendor != "ATA" && info.vendor != "NVMe" && model.rfind(info.vendor, 0) != 0)
             model = info.vendor + " " + model;
@@ -271,14 +314,19 @@ void CollectDisks(std::vector<Section>& out)
         c.fields.push_back(MakeField("DISK_STORAGE_MODEL", model));
         c.fields.push_back(info.ok ? MakeField("STORAGE_QUERY_PROPERTY", info.serial)
                                    : Unsupported("STORAGE_QUERY_PROPERTY"));
+        // Once a request timed out, every read that failed from then on is because the drive stopped answering.
+        auto add = [&](Field f) {
+            if (drive.hung && f.placeholder) f.value = "Not responding";
+            c.fields.push_back(std::move(f));
+        };
         const char* denied = "Requires administrator";
-        c.fields.push_back(fullAccess ? QuerySmart(h.get()) : Unsupported("SMART_RCV_DRIVE_DATA", denied));
-        c.fields.push_back(QueryWwn(h.get()));
-        c.fields.push_back(fullAccess ? QueryScsiPassThrough(h.get()) : Unsupported("SCSI_PASS_THROUGH", denied));
-        c.fields.push_back(fullAccess ? QueryAtaPassThrough(h.get()) : Unsupported("ATA_PASS_THROUGH", denied));
-        if (info.bus == BusTypeNvme) c.fields.push_back(QueryNvmeIdentify(h.get()));
+        add(fullAccess ? QuerySmart(drive) : Unsupported("SMART_RCV_DRIVE_DATA", denied));
+        add(QueryWwn(drive));
+        add(fullAccess ? QueryScsiPassThrough(drive) : Unsupported("SCSI_PASS_THROUGH", denied));
+        add(fullAccess ? QueryAtaPassThrough(drive) : Unsupported("ATA_PASS_THROUGH", denied));
+        if (info.bus == BusTypeNvme) add(QueryNvmeIdentify(drive));
         c.fields.push_back(MakeField("Firmware", info.revision));
-        if (auto cap = Capacity(h.get()); !cap.empty()) c.fields.push_back(MakeField("Capacity", cap));
+        if (auto cap = Capacity(drive); !cap.empty()) c.fields.push_back(MakeField("Capacity", cap));
         section.cards.push_back(std::move(c));
     }
     if (section.cards.empty()) section.cards.push_back({ "Disks", "IOCTL", { Unsupported("Status", "No drive found") } });
