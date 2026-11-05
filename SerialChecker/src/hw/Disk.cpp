@@ -17,47 +17,9 @@ struct HandleCloser {
 };
 using UniqueHandle = std::unique_ptr<void, HandleCloser>;
 
-// IOCTLs go through an overlapped handle with a deadline: a drive that stops answering (crashed SSD firmware,
-// dying disk) would otherwise block the whole collection forever. After one timeout the drive is skipped.
-class Drive {
-public:
-    explicit Drive(HANDLE h) : h_(h) {}
-    bool hung = false;
-
-    bool Ioctl(DWORD code, const void* in, DWORD inSize, void* out, DWORD outSize, DWORD* returned)
-    {
-        if (hung) return false;
-        // The output buffer lives on the heap: a request the driver never completes must not write into freed memory.
-        struct Request {
-            OVERLAPPED ov{};
-            std::vector<BYTE> out;
-        };
-        auto* r = new Request;
-        r->out.resize(outSize);
-        r->ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-        BOOL ok = DeviceIoControl(h_, code, const_cast<void*>(in), inSize, r->out.data(), outSize, nullptr, &r->ov);
-        if (ok || GetLastError() == ERROR_IO_PENDING) {
-            if (WaitForSingleObject(r->ov.hEvent, kTimeoutMs) == WAIT_TIMEOUT) {
-                hung = true;
-                CancelIoEx(h_, &r->ov);
-                if (WaitForSingleObject(r->ov.hEvent, 1000) == WAIT_TIMEOUT) return false;  // leak r: still owned by the driver
-            }
-            DWORD n = 0;
-            ok = GetOverlappedResult(h_, &r->ov, &n, FALSE);
-            if (ok) {
-                if (out && n) memcpy(out, r->out.data(), n);
-                *returned = n;
-            }
-        }
-        CloseHandle(r->ov.hEvent);
-        delete r;
-        return ok;
-    }
-
-private:
-    static constexpr DWORD kTimeoutMs = 10000;  // generous: a sleeping HDD has to spin up first
-    HANDLE h_;
-};
+// Every IOCTL goes through TimedDevice: a drive that stops answering is skipped instead of blocking the collection.
+using Drive = TimedDevice;
+constexpr DWORD kDriveTimeoutMs = 10000;  // generous: a sleeping HDD has to spin up first
 
 // ATA IDENTIFY strings are stored as big-endian 16-bit words.
 std::string AtaString(const BYTE* identify, int firstWord, int lastWord)
@@ -250,6 +212,65 @@ Field QueryNvmeIdentify(Drive& drive)
     return MakeField("NVME_IDENTIFY", std::string((const char*)id + 4, 20));  // SN: bytes 4..23
 }
 
+std::string GuidString(const GUID& g)
+{
+    return Format("%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", g.Data1, g.Data2, g.Data3, g.Data4[0], g.Data4[1],
+                  g.Data4[2], g.Data4[3], g.Data4[4], g.Data4[5], g.Data4[6], g.Data4[7]);
+}
+
+// Names the partition types a Windows install creates; others stay unnamed.
+const char* GptTypeName(const GUID& type)
+{
+    static const struct {
+        GUID guid;
+        const char* name;
+    } kTypes[] = {
+        { { 0xC12A7328, 0xF81F, 0x11D2, { 0xBA, 0x4B, 0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B } }, "EFI" },
+        { { 0xE3C9E316, 0x0B5C, 0x4DB8, { 0x81, 0x7D, 0xF9, 0x2D, 0xF0, 0x02, 0x15, 0xAE } }, "MSR" },
+        { { 0xEBD0A0A2, 0xB9E5, 0x4433, { 0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7 } }, "Basic data" },
+        { { 0xDE94BBA4, 0x06D1, 0x4D40, { 0xA1, 0x6A, 0xBF, 0xD5, 0x01, 0x79, 0xD6, 0xAC } }, "Recovery" },
+    };
+    for (const auto& t : kTypes)
+        if (memcmp(&t.guid, &type, sizeof(GUID)) == 0) return t.name;
+    return nullptr;
+}
+
+// Partition table identifiers: GPT disk GUID plus one GUID per partition, or the 32-bit MBR disk signature.
+std::vector<Field> QueryLayout(Drive& drive)
+{
+    constexpr size_t kHeader = offsetof(DRIVE_LAYOUT_INFORMATION_EX, PartitionEntry);
+    std::vector<BYTE> buf(kHeader + 128 * sizeof(PARTITION_INFORMATION_EX));  // 128 = default GPT entry count
+    DWORD ret = 0;
+    if (!drive.Ioctl(IOCTL_DISK_GET_DRIVE_LAYOUT_EX, nullptr, 0, buf.data(), (DWORD)buf.size(), &ret) || ret < kHeader)
+        return { Unsupported("Disk ID") };
+
+    auto* layout = (const DRIVE_LAYOUT_INFORMATION_EX*)buf.data();
+    std::vector<Field> fields;
+    switch (layout->PartitionStyle) {
+    case PARTITION_STYLE_GPT: {
+        fields.push_back(MakeField("GPT Disk GUID", GuidString(layout->Gpt.DiskId)));
+        static const GUID kNone{};
+        size_t count = std::min<size_t>(layout->PartitionCount, (ret - kHeader) / sizeof(PARTITION_INFORMATION_EX));
+        for (size_t i = 0; i < count; ++i) {
+            const auto& p = layout->PartitionEntry[i];
+            if (p.PartitionStyle != PARTITION_STYLE_GPT || memcmp(&p.Gpt.PartitionType, &kNone, sizeof(GUID)) == 0)
+                continue;
+            std::string label = Format("Partition %lu", p.PartitionNumber);
+            if (const char* type = GptTypeName(p.Gpt.PartitionType)) label += Format("  (%s)", type);
+            fields.push_back(MakeField(label, GuidString(p.Gpt.PartitionId)));
+        }
+        break;
+    }
+    case PARTITION_STYLE_MBR:
+        fields.push_back(MakeField("MBR Signature", Format("%08lX", layout->Mbr.Signature)));
+        break;
+    default:
+        fields.push_back(Unsupported("Disk ID", "No partition table"));
+        break;
+    }
+    return fields;
+}
+
 std::string Capacity(Drive& drive)
 {
     GET_LENGTH_INFORMATION len{};
@@ -257,6 +278,19 @@ std::string Capacity(Drive& drive)
     if (!drive.Ioctl(IOCTL_DISK_GET_LENGTH_INFO, nullptr, 0, &len, sizeof(len), &ret)) return {};
     double gb = (double)len.Length.QuadPart / 1e9;
     return gb >= 1000 ? Format("%.2f TB", gb / 1000) : Format("%.0f GB", gb);
+}
+
+// NTFS and ReFS keep a 64-bit serial; GetVolumeInformation only returns its low 32 bits. FileIdInfo on the root
+// directory reports the full value without the admin rights FSCTL_GET_NTFS_VOLUME_DATA needs on a volume handle.
+Field VolumeSerial64(const std::string& name, const wchar_t* root)
+{
+    const std::string label = name + "  Serial (64-bit)";
+    UniqueHandle h(CreateFileW(root, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr));
+    FILE_ID_INFO info{};
+    if (h.get() == INVALID_HANDLE_VALUE || !GetFileInformationByHandleEx(h.get(), FileIdInfo, &info, sizeof(info)))
+        return Unsupported(label);
+    return MakeField(label, Format("%016llX", info.VolumeSerialNumber));
 }
 
 void CollectVolumes(std::vector<Section>& out)
@@ -274,6 +308,7 @@ void CollectVolumes(std::vector<Section>& out)
         std::string extra = Narrow(label);
         extra = extra.empty() ? Narrow(fs) : extra + ", " + Narrow(fs);
         card.fields.push_back(MakeField(name + "  (" + extra + ")", Format("%04X-%04X", serial >> 16, serial & 0xFFFF)));
+        if (_wcsicmp(fs, L"NTFS") == 0 || _wcsicmp(fs, L"ReFS") == 0) card.fields.push_back(VolumeSerial64(name, d));
 
         wchar_t guid[64];
         if (GetVolumeNameForVolumeMountPointW(d, guid, _countof(guid))) {
@@ -303,7 +338,7 @@ void CollectDisks(std::vector<Section>& out)
             h.reset(CreateFileW(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED,
                                 nullptr));
         if (h.get() == INVALID_HANDLE_VALUE) continue;
-        Drive drive(h.get());
+        Drive drive(h.get(), kDriveTimeoutMs);
 
         DeviceInfo info = QueryDeviceProperty(drive);
         std::string model = info.product;
@@ -327,6 +362,7 @@ void CollectDisks(std::vector<Section>& out)
         if (info.bus == BusTypeNvme) add(QueryNvmeIdentify(drive));
         c.fields.push_back(MakeField("Firmware", info.revision));
         if (auto cap = Capacity(drive); !cap.empty()) c.fields.push_back(MakeField("Capacity", cap));
+        for (auto& f : QueryLayout(drive)) add(std::move(f));
         section.cards.push_back(std::move(c));
     }
     if (section.cards.empty()) section.cards.push_back({ "Disks", "IOCTL", { Unsupported("Status", "No drive found") } });

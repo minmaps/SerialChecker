@@ -11,16 +11,18 @@ Grab `SerialChecker.exe` from the [latest release](../../releases/latest). It as
 | Section | Source | Values |
 |---|---|---|
 | System, BIOS | SMBIOS (`GetSystemFirmwareTable`) | Manufacturer, product, serial, UUID, SKU, family, BIOS version |
+| System → ACPI | ACPI tables (`GetSystemFirmwareTable('ACPI')`) | FADT OEM ID / table ID / revision, OEM Windows product key (MSDM) |
 | Baseboard, Chassis | SMBIOS | Manufacturer, product, serial, asset tag |
 | Processor | SMBIOS | Model, Processor ID, serial, part number, socket |
 | Memory | SMBIOS type 17 | Part number, serial, size, speed per module |
 | TPM | TBS (`TPM2_GetCapability`, `TPM2_ReadPublic`), Platform Crypto Provider, registry | Manufacturer, firmware, EK public key hash through each path, EK certificate, SRK / Windows AIK hashes |
-| Disks | `IOCTL_STORAGE_QUERY_PROPERTY`, `SMART_RCV_DRIVE_DATA`, SCSI / ATA pass-through, NVMe Identify | Model, serial through each path, WWN, firmware, capacity |
-| Volumes | `GetVolumeInformation` | Volume serial and GUID |
-| Network | IP Helper, NDIS OID, registry | Current / permanent / overridden MAC |
+| Disks | `IOCTL_STORAGE_QUERY_PROPERTY`, `SMART_RCV_DRIVE_DATA`, SCSI / ATA pass-through, NVMe Identify, `IOCTL_DISK_GET_DRIVE_LAYOUT_EX` | Model, serial through each path, WWN, firmware, capacity, GPT disk GUID / MBR signature, partition GUIDs |
+| Volumes | `GetVolumeInformation`, `FileIdInfo` | Volume serial (32-bit, and 64-bit for NTFS / ReFS) and GUID |
+| Network | IP Helper, NDIS OID, Bluetooth API, registry | Current / permanent / overridden MAC, Bluetooth radio address, DHCPv6 client DUID (and the MAC embedded in it) |
+| USB | SetupAPI, hub IOCTLs (`IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION`) | Product, VID / PID, manufacturer, serial from the device instance ID and from the device's own string descriptor |
 | Monitors | EDID (SetupAPI) | Manufacturer, model, serial, ID serial, refresh rate |
 | Graphics | DXGI, NVML, Vulkan | Vendor / device / subsystem IDs, GPU UUID (NVML for NVIDIA, Vulkan for any vendor), VRAM |
-| Windows | Registry | MachineGuid, ProductId, HwProfileGuid, SQM MachineId, SusClientId |
+| Windows | Registry, LSA | MachineGuid, ProductId, HwProfileGuid, SQM MachineId, SusClientId, machine SID, Computer Hardware IDs (CHID), every system UUID this install has booted on (`HKLM\SYSTEM\HardwareConfig`) |
 
 Everything runs in user mode, no driver.
 

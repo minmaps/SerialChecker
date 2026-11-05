@@ -109,6 +109,36 @@ bool IsProcessElevated()
     return ok && elevation.TokenIsElevated;
 }
 
+bool TimedDevice::Ioctl(DWORD code, const void* in, DWORD inSize, void* out, DWORD outSize, DWORD* returned)
+{
+    if (hung) return false;
+    // The output buffer lives on the heap: a request the driver never completes must not write into freed memory.
+    struct Request {
+        OVERLAPPED ov{};
+        std::vector<BYTE> out;
+    };
+    auto* r = new Request;
+    r->out.resize(outSize);
+    r->ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    BOOL ok = DeviceIoControl(h_, code, const_cast<void*>(in), inSize, r->out.data(), outSize, nullptr, &r->ov);
+    if (ok || GetLastError() == ERROR_IO_PENDING) {
+        if (WaitForSingleObject(r->ov.hEvent, timeoutMs_) == WAIT_TIMEOUT) {
+            hung = true;
+            CancelIoEx(h_, &r->ov);
+            if (WaitForSingleObject(r->ov.hEvent, 1000) == WAIT_TIMEOUT) return false;  // leak r: still owned by the driver
+        }
+        DWORD n = 0;
+        ok = GetOverlappedResult(h_, &r->ov, &n, FALSE);
+        if (ok) {
+            if (out && n) memcpy(out, r->out.data(), n);
+            *returned = n;
+        }
+    }
+    CloseHandle(r->ov.hEvent);
+    delete r;
+    return ok;
+}
+
 std::string RegReadString(const wchar_t* subKey, const wchar_t* valueName)
 {
     wchar_t buf[1024];
@@ -139,6 +169,21 @@ std::vector<uint8_t> RegReadBinary(const wchar_t* subKey, const wchar_t* valueNa
     if (RegGetValueW(HKEY_LOCAL_MACHINE, subKey, valueName, flags, nullptr, data.data(), &size) != ERROR_SUCCESS) return {};
     data.resize(size);
     return data;
+}
+
+std::vector<std::string> RegReadMultiString(const wchar_t* subKey, const wchar_t* valueName)
+{
+    const DWORD flags = RRF_RT_REG_MULTI_SZ | RRF_SUBKEY_WOW6464KEY;
+    DWORD size = 0;
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, subKey, valueName, flags, nullptr, nullptr, &size) != ERROR_SUCCESS || !size)
+        return {};
+    std::vector<wchar_t> buf(size / sizeof(wchar_t) + 2);
+    size = (DWORD)(buf.size() * sizeof(wchar_t));
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, subKey, valueName, flags, nullptr, buf.data(), &size) != ERROR_SUCCESS) return {};
+    buf.back() = buf[buf.size() - 2] = 0;  // guarantee the double-NUL terminator
+    std::vector<std::string> out;
+    for (const wchar_t* s = buf.data(); *s; s += wcslen(s) + 1) out.push_back(Narrow(s));
+    return out;
 }
 
 } // namespace hw

@@ -4,6 +4,7 @@
 #include <winsock2.h>
 #include <windows.h>
 #include <iphlpapi.h>
+#include <bluetoothapis.h>
 
 namespace hw {
 namespace {
@@ -59,6 +60,56 @@ Field RegistryOverride(const std::string& adapterGuid)
     return result;
 }
 
+// Bluetooth radios through BluetoothApis.dll, loaded on demand: editions without the Bluetooth stack lack it.
+void AddBluetoothRadios(Section& section)
+{
+    HMODULE lib = LoadLibraryExW(L"BluetoothApis.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!lib) return;
+    auto findFirst = (HBLUETOOTH_RADIO_FIND(WINAPI*)(const BLUETOOTH_FIND_RADIO_PARAMS*, HANDLE*))GetProcAddress(
+        lib, "BluetoothFindFirstRadio");
+    auto findNext = (BOOL(WINAPI*)(HBLUETOOTH_RADIO_FIND, HANDLE*))GetProcAddress(lib, "BluetoothFindNextRadio");
+    auto findClose = (BOOL(WINAPI*)(HBLUETOOTH_RADIO_FIND))GetProcAddress(lib, "BluetoothFindRadioClose");
+    auto getInfo = (DWORD(WINAPI*)(HANDLE, BLUETOOTH_RADIO_INFO*))GetProcAddress(lib, "BluetoothGetRadioInfo");
+    if (findFirst && findNext && findClose && getInfo) {
+        BLUETOOTH_FIND_RADIO_PARAMS params{ sizeof(params) };
+        HANDLE radio = nullptr;
+        HBLUETOOTH_RADIO_FIND find = findFirst(&params, &radio);
+        for (bool more = find != nullptr; more; more = findNext(find, &radio) != FALSE) {
+            BLUETOOTH_RADIO_INFO info{ sizeof(info) };
+            if (getInfo(radio, &info) == ERROR_SUCCESS) {
+                BYTE mac[6];
+                for (int k = 0; k < 6; ++k) mac[k] = info.address.rgBytes[5 - k];  // stored least significant byte first
+                Card c{ "Bluetooth Radio", "Bluetooth" };
+                c.fields.push_back(MakeField("MAC Address", HexBytes(mac, 6)));
+                c.fields.push_back(MakeField("Name", Narrow(info.szName)));
+                section.cards.push_back(std::move(c));
+            }
+            CloseHandle(radio);
+        }
+        if (find) findClose(find);
+    }
+    FreeLibrary(lib);
+}
+
+// DHCPv6 client DUID: created once per install and kept across MAC changes. Its DUID-LLT / DUID-LL forms embed
+// the MAC of the adapter it was generated from.
+Card Dhcpv6Duid()
+{
+    Card c{ "DHCPv6", "Registry" };
+    auto d = RegReadBinary(L"SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters", L"Dhcpv6DUID");
+    if (d.empty()) {
+        c.fields.push_back(Field{ "Client DUID", "Not set", true });
+        return c;
+    }
+    c.fields.push_back(MakeField("Client DUID", HexBytes(d.data(), d.size(), '-')));  // same format as ipconfig /all
+    unsigned type = d.size() >= 2 ? d[0] << 8 | d[1] : 0;
+    unsigned hwType = d.size() >= 4 ? d[2] << 8 | d[3] : 0;
+    size_t macOffset = type == 1 ? 8 : type == 3 ? 4 : 0;  // LLT: type, hw type, time, MAC / LL: type, hw type, MAC
+    if (macOffset && hwType == 1 && d.size() == macOffset + 6)
+        c.fields.push_back(MakeField("DUID MAC", HexBytes(d.data() + macOffset, 6)));
+    return c;
+}
+
 } // namespace
 
 void CollectNetwork(std::vector<Section>& out)
@@ -98,6 +149,8 @@ void CollectNetwork(std::vector<Section>& out)
         }
     }
     if (section.cards.empty()) section.cards.push_back({ "Network", "NDIS", { Unsupported("Status", "No adapter found") } });
+    AddBluetoothRadios(section);
+    section.cards.push_back(Dhcpv6Duid());
     out.push_back(std::move(section));
 }
 

@@ -23,9 +23,11 @@ Report Collect()
     r.capturedAt = buf;
 
     CollectSmbios(r.sections);
+    CollectAcpi(r.sections);
     CollectTpm(r.sections);
     CollectDisks(r.sections);
     CollectNetwork(r.sections);
+    CollectUsb(r.sections);
     CollectMonitors(r.sections);
     CollectGraphics(r.sections);
     CollectWindows(r.sections);

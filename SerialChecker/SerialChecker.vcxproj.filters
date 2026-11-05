@@ -23,8 +23,10 @@
     <ClCompile Include="src\ui\Theme.cpp"><Filter>src\ui</Filter></ClCompile>
     <ClCompile Include="src\hw\Util.cpp"><Filter>src\hw</Filter></ClCompile>
     <ClCompile Include="src\hw\Smbios.cpp"><Filter>src\hw</Filter></ClCompile>
+    <ClCompile Include="src\hw\Acpi.cpp"><Filter>src\hw</Filter></ClCompile>
     <ClCompile Include="src\hw\Disk.cpp"><Filter>src\hw</Filter></ClCompile>
     <ClCompile Include="src\hw\Network.cpp"><Filter>src\hw</Filter></ClCompile>
+    <ClCompile Include="src\hw\Usb.cpp"><Filter>src\hw</Filter></ClCompile>
     <ClCompile Include="src\hw\Monitor.cpp"><Filter>src\hw</Filter></ClCompile>
     <ClCompile Include="src\hw\Tpm.cpp"><Filter>src\hw</Filter></ClCompile>
     <ClCompile Include="src\hw\Gpu.cpp"><Filter>src\hw</Filter></ClCompile>
